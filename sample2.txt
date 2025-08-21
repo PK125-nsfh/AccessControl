@@ -1,0 +1,96 @@
+Got it 👍 — here’s the **text-only version** of the DIGIT Access Control (ACS) diagrams and flows, no graphics, just structured text you can paste into docs/code:
+
+---
+
+## 1) Authorization Flow (Step by Step)
+
+1. **Client (citizen/employee app)** sends API request with JWT token.
+2. **API Gateway** (Policy Enforcement Point) validates JWT with **Auth Service / IdP**.
+3. Gateway calls **Access Control Service (ACS)** with `{action, tenantId, roles}`.
+4. **ACS** checks:
+
+   * User roles (from **User Service**, tenant-aware).
+   * Role → Action mappings (from **MDMS**).
+   * Cached results (Redis) if available.
+5. **ACS** makes decision → `ALLOW` or `DENY`.
+
+   * If ALLOW → Gateway forwards request to domain service.
+   * If DENY → Gateway returns 403 to client.
+6. **Audit** (allow/deny) can be pushed to Kafka.
+
+---
+
+## 2) Core Domain Model (Classes)
+
+* **User**
+
+  * id, username, type (CITIZEN | EMPLOYEE | SYSTEM)
+* **Tenant**
+
+  * tenantId, name
+* **Role**
+
+  * code, name, description, isStateLevel
+* **Action**
+
+  * name, url (API path/UI event), method, serviceName, module, feature
+* **UserRole**
+
+  * userId, roleCode, tenantId (links user → role → tenant)
+* **RoleAction**
+
+  * roleCode, actionName, tenantId (links role → action → tenant)
+* **AuthorizationRequest**
+
+  * actionName, tenantId, userId, userRoles\[], attributes (optional ABAC attributes)
+* **AuthorizationDecision**
+
+  * allowed (true/false), allowedActions\[], reason, ttlMillis
+
+**Relationships**
+
+* User ↔ UserRole ↔ Role (scoped by Tenant)
+* Role ↔ RoleAction ↔ Action (scoped by Tenant)
+* AuthorizationRequest links user & tenant to decision.
+
+---
+
+## 3) High-Level Architecture
+
+* **Client Layer**: Web/Mobile frontend
+* **Edge Layer**: API Gateway (validates JWT, calls ACS)
+* **Identity & Access**: Auth Service (OIDC/JWT), Access Control Service (decision point)
+* **Core Registries**: User Service (roles per tenant), MDMS (actions + role-action mappings)
+* **Data/Infra**: Postgres (ACS metadata), Redis (cache), Kafka (audit events), Observability stack (Prometheus/Grafana/ELK)
+* **Domain Services**: Trade License, Property Tax, Water, etc. (receive request only if ALLOW)
+
+---
+
+## 4) Sequence for Single API Call
+
+1. Frontend → Gateway: API request + JWT
+2. Gateway → Auth Service: validate token
+3. Auth Service → Gateway: return claims (userId, tenantId, roles)
+4. Gateway → ACS: authorize(action, tenantId)
+5. ACS → User Service: get user roles for tenant
+6. ACS → MDMS: get action definitions and role-action mappings
+7. ACS → Gateway: ALLOW or DENY
+8. Gateway → Domain Service: forward if ALLOW
+9. Domain Service → Gateway → Frontend: return response
+
+---
+
+## 5) Implementation Pointers
+
+* Define **actions** in MDMS and maintain tenant-scoped `role-action` mappings.
+* Key APIs:
+
+  * `POST /authorize` → single decision.
+  * `POST /_getActionsForUser` → fetch allowed actions (for menu rendering).
+* Cache **user-roles** and **role-action mappings** with TTL.
+* Emit **audit events** to Kafka.
+* Health & monitoring endpoints: `/_health`, `/metrics`.
+
+---
+
+👉 Do you want me to simplify this further into a **one-page cheat sheet** (for quick onboarding/dev use), or keep the detailed breakdown?
